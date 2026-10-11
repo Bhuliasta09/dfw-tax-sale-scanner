@@ -163,15 +163,17 @@ def get_zillow_data(address):
         return 'https://via.placeholder.com/600x400?text=Image+Unavailable', None
 
 def analyze_tax_deals(state):
-    """Scrapes tax sale lists and underwrites the deals with images and ROI."""
+    """Scrapes tax sale lists and underwrites the deals, and ranks Top 5 by ROI."""
     print("Checking Tax Sale Deals...")
 
+    #REPLACED fake addresses with real dfw addresses so Zillow finds a value
     upcoming_auctions = [
-        {"id": "DAL-75149-1", "address": "1402 Example Ln, Mesquite, TX 75149", "min_bid": 35000, "county": "Dallas"},
-        {"id": "DAL-75216-2", "address": "808 Sample St, Dallas, TX 75216", "min_bid": 18000, "county": "Dallas"},
-        {"id": "DAL-75042-3", "address": "2910 Test Dr, Garland, TX 75042", "min_bid": 45000, "county": "Dallas"}
+        {"id": "DAL-75149-1", "address": "832 Brockden DR, Mesquite, TX 75149", "min_bid": 35000, "county": "Dallas"},
+        {"id": "DAL-75216-2", "address": "2618 Idaho Ave, Dallas, TX 75216", "min_bid": 18000, "county": "Dallas"},
+        {"id": "DAL-75042-3", "address": "1917 Larry Dr, Garland, TX 75042", "min_bid": 45000, "county": "Dallas"}
     ]
 
+    qualified_deals = []
     for auction in upcoming_auctions:
         prop_id = auction["id"]
         if prop_id in state["seen_tax_deals"]:
@@ -185,15 +187,11 @@ def analyze_tax_deals(state):
         sqft = get_property_specs(address)
         image_url, arv = get_zillow_data(address)
 
-        # Fallback if Zillow returns empty
+        # Fallback if Zillow fails, use a dallas average ($210/sqft) instead of crashing/skipping
         if not arv:
-            arv = get_arv(address)
+            arv = sqft * 210
 
         print(f"[EVALUATING] {address} | SqFt: {sqft} | Min Bid: ${min_bid} | ARV: {arv}")
-
-        if not arv:
-            print(f"[SKIP] No ARV found for {address}")
-            continue
 
         rehab_cost = sqft * REHAB_COST_PER_SQFT
         all_in_cost = min_bid + rehab_cost
@@ -203,13 +201,38 @@ def analyze_tax_deals(state):
 
         print(f"[METRICS] All-In: ${all_in_cost:,.0f} | Profit: ${net_profit:,.0f} | ROI: {roi_percentage:.1f}%")
 
-    if all_in_cost <= MAX_ALL_IN_BUDGET and net_profit >= MIN_NET_PROFIT:
+        # 1. ADD VALID DEALS TO A LIST INSTEAD OF SENDING IMMEDIATELY
+        if all_in_cost <= MAX_ALL_IN_BUDGET and net_profit >= MIN_NET_PROFIT:
+            qualified_deals.append({
+                "prop_id": prop_id,
+                "address": address,
+                "county": county,
+                "sqft": sqft,
+                "min_bid": min_bid,
+                "rehab_cost": rehab_cost,
+                "all_in_cost": all_in_cost,
+                "arv": arv,
+                "net_profit": net_profit,
+                "roi_percentage": roi_percentage,
+                "image_url": image_url
+            }]
+        else:
+             print(f"[FILTERED OUT] Budget or profit thresold not met for {address}")
+            
+    # 2. SORT THE LIST BY HIGHEST ROI
+    qualified_deals.sort(key=lambda x: x["roi_percentage"}, reverse=True)
+
+    # 3. GRAB ONLY THE TOP 5 DEALS
+    top_5_deals = qualified_deals[:5]
+
+    # 4. SEND THE TOP 5 TO DISCORD
+    for deal in top_5_deals:
         payload = {
             "embeds": [{
-                "title": f"💰 {county} County Deal: Validated Flip",
-                "description": f"**{address}**\n**SqFt:** {sqft}",
-                "color": 3066993,
-                "image": {"url": image_url},
+                "title": f"💰 TOP 5 FLIP: {deal['count']} County",
+                "description": f"**{deal}[address']}**\n**SqFt:** {deal['sqft']}",
+                "color": 16766720, Gold Color
+                "image": {"url": deal['image_url']},
                 "fields": [
                     {"name": "Min Bid (Acquisition)", "value": f"${min_bid:,.0f}", "inline": True},
                     {"name": "Est. Rehab", "value": f"${rehab_cost:,.0f}", "inline": True},
@@ -222,7 +245,7 @@ def analyze_tax_deals(state):
         }
         if DISCORD_WEBHOOK:
             resp = requests.post(DISCORD_WEBHOOK, json=payload)
-            print(f"[DISCORD POST] Status: {resp.status_code}") # 204 means success
+            print(f"[DISCORD POST] Top Deal Sent: {resp.status_code}")
             if resp.status_code != 204:
                 print(f"[DISCORD ERROR] {resp.text}")
         else:
