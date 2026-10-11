@@ -1,0 +1,222 @@
+import requests
+from bs4 import BeautifulSoup
+import feedparser
+import json
+import os
+import pdfplumber
+import io
+import re
+import urllib.parse
+from datetime import datetime
+
+# ==========================================
+# CONFIGURATION & SECRETS
+# ==========================================
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
+RENTCAST_API_KEY = os.environ.get("RENTCAST_API_KEY")
+ATTOM_API_KEY = os.environ.get("ATTOM_API_KEY")
+
+STATE_FILE = "dfw_radar_state.json"
+
+# Investment Criteria (Customizable)
+REHAB_COST_PER_SQFT = 45.00
+MAX_ALL_IN_BUDGET = 150000
+MIN_NET_PROFIT = 25000
+
+# ==========================================
+# STATE MANAGEMENT
+# ==========================================
+def load_state():
+    """Loads historical data to prevent duplicate Discord pings."""
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    return {"seen_news": [], "seen_pdfs": [], "seen_tax_deals": []}
+
+def save_state(state):
+    """Saves current state to the filesystem."""
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+# ==========================================
+# MODULE 1: MACRO NEWS RADAR
+# ==========================================
+def check_foreclosure_news(state):
+    """Scrapes Google News RSS for DFW distressed real estate & bankruptcies."""
+    print("Checking Macro Foreclosure News...")
+    query = urllib.parse.quote('(foreclosure OR "distressed property" OR bankruptcy) (Dallas OR "Tarrant County" OR "DFW")')
+    rss_url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+
+    feed = feedparser.parse(rss_url)
+
+    for entry in feed.entries[:5]: # Process top 5 recent articles
+        article_id = entry.link
+        if article_id not in state["seen_news"]:
+            payload = {
+                "embeds": [{
+                    "title": "📰 Breaking DFW Real Estate Distress News",
+                    "description": f"**[{entry.title}]({entry.link})**",
+                    "color": 16711680, # Red
+                    "footer": {"text": f"Published: {entry.published}"}
+                }]
+            }
+            requests.post(DISCORD_WEBHOOK, json=payload)
+            state["seen_news"].append(article_id)
+
+    # Truncate array to prevent infinite bloat
+    state["seen_news"] = state["seen_news"][-50:]
+
+# ==========================================
+# MODULE 2: EARLY NOTICE OF TRUSTEE SALE (NTS) RADAR
+# ==========================================
+def extract_address_from_pdf(pdf_bytes):
+    """Uses pdfplumber to find the street address inside a legal NTS filing."""
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            text = "".join([page.extract_text() + "\n" for page in pdf.pages])
+            match = re.search(r'(?i)(commonly known as|street address is|located at)[\s:]*([1-9]\d* [a-zA-Z0-9\s,\.]+TX\s*\d{5})', text)
+            if match:
+                return match.group(2).strip().replace('\n', ' ')
+            return "Address hidden in legal description - Manual review required"
+    except Exception:
+        return "Could not parse PDF text."
+
+def check_county_clerk_filings(state):
+    """Monitors the Dallas County Clerk for new 21-day foreclosure postings."""
+    print("Checking Dallas County Clerk NTS Filings...")
+    url = "https://www.dallascounty.org/government/county-clerk/recording/foreclosures.php"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    try:
+        response = requests.get(url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        pdf_links = soup.find_all('a', href=re.compile(r'\.pdf$'))
+
+        for link in pdf_links:
+            href = link.get('href')
+            if not href.startswith('http'):
+                href = "https://www.dallascounty.org" + href
+
+            pdf_id = href.split('/')[-1]
+
+            if pdf_id not in state["seen_pdfs"]:
+                print(f"New Pre-Foreclosure Notice Found: {pdf_id}")
+                pdf_response = requests.get(href, headers=headers)
+                address = extract_address_from_pdf(pdf_response.content)
+
+                payload = {
+                    "embeds": [{
+                        "title": "🏛️ PRE-FORECLOSURE: New 21-Day NTS Filed",
+                        "description": f"**Extracted Address:**\n{address}",
+                        "color": 3447003, # Blue
+                        "fields": [{"name": "Original County PDF", "value": f"[Click to view Document]({href})"}],
+                        "footer": {"text": "Notice filed at Dallas County Clerk"}
+                    }]
+                }
+                requests.post(DISCORD_WEBHOOK, json=payload)
+                state["seen_pdfs"].append(pdf_id)
+
+        state["seen_pdfs"] = state["seen_pdfs"][-200:]
+    except Exception as e:
+        print(f"Error scraping county site: {e}")
+
+# ==========================================
+# MODULE 3: TAX SALE DEAL ANALYZER
+# ==========================================
+def get_property_specs(address):
+    """API 1: Get exact SqFt from ATTOM Data."""
+    url = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
+    headers = {"apikey": ATTOM_API_KEY, "accept": "application/json"}
+    parts = address.split(',')
+    if len(parts) < 2: return 1200 # Fallback
+    params = {"address1": parts[0].strip(), "address2": parts[1].strip()}
+    try:
+        res = requests.get(url, headers=headers, params=params).json()
+        return int(res['property'][0]['building']['size']['universalsize'])
+    except:
+        return 1200 # Fallback estimate
+
+def get_arv(address):
+    """API 2: Get live After Repair Value (AVM) from RentCast."""
+    url = "https://api.rentcast.io/v1/avm/value"
+    headers = {"X-Api-Key": RENTCAST_API_KEY, "accept": "application/json"}
+    params = {"address": address, "compCount": 5, "maxRadius": 2}
+    try:
+        res = requests.get(url, headers=headers, params=params).json()
+        return res['price']
+    except:
+        return None
+
+def analyze_tax_deals(state):
+    """Scrapes tax sale lists and underwrites the deals."""
+    print("Checking Tax Sale Deals...")
+
+    # In production, this scrapes LGBS.com or PBFCM.com dynamic JSON lists.
+    # We simulate the parsed target data structure here.
+    upcoming_auctions = [
+        {"id": "DAL-75149-1", "address": "1402 Example Ln, Mesquite, TX 75149", "min_bid": 35000, "county": "Dallas"},
+        {"id": "DAL-75216-2", "address": "808 Sample St, Dallas, TX 75216", "min_bid": 18000, "county": "Dallas"},
+        {"id": "DAL-75042-3", "address": "2910 Test Dr, Garland, TX 75042", "min_bid": 45000, "county": "Dallas"}
+    ]
+
+    for auction in upcoming_auctions:
+        prop_id = auction["id"]
+        if prop_id in state["seen_tax_deals"]:
+            continue
+
+        address = auction["address"]
+        min_bid = auction["min_bid"]
+        county = auction["county"]
+
+        sqft = get_property_specs(address)
+        arv = get_arv(address)
+
+        if not arv: # Skip if we can't find a valuation
+            continue
+
+        rehab_cost = sqft * REHAB_COST_PER_SQFT
+        all_in_cost = min_bid + rehab_cost
+
+        # Deduct 8% for realtor commissions, closing, and hard money holding costs
+        net_profit = arv - all_in_cost - (arv * 0.08)
+
+        # CORE FILTER: Only ping Discord if it meets your financial criteria
+        if all_in_cost <= MAX_ALL_IN_BUDGET and net_profit >= MIN_NET_PROFIT:
+            payload = {
+                "embeds": [{
+                    "title": f"💰 {county} County Tax Sale: Validated Deal",
+                    "description": f"**Address:** {address}\n**SqFt:** {sqft} (via ATTOM)",
+                    "color": 3066993, # Green
+                    "fields": [
+                        {"name": "Min Bid (Back Taxes)", "value": f"${min_bid:,.0f}", "inline": True},
+                        {"name": f"Est. Rehab (${REHAB_COST_PER_SQFT}/sqft)", "value": f"${rehab_cost:,.0f}", "inline": True},
+                        {"name": "Total All-In Cost", "value": f"${all_in_cost:,.0f}", "inline": True},
+                        {"name": "API Verified ARV", "value": f"${arv:,.0f} (RentCast)", "inline": False},
+                        {"name": "Projected Net Profit", "value": f"**${net_profit:,.0f}**", "inline": False}
+                    ]
+                }]
+            }
+            requests.post(DISCORD_WEBHOOK, json=payload)
+            state["seen_tax_deals"].append(prop_id)
+
+# ==========================================
+# MASTER EXECUTION LOOP
+# ==========================================
+if __name__ == "__main__":
+    print(f"Starting DFW Foreclosure Engine at {datetime.now()}")
+
+    current_state = load_state()
+
+    # 1. Check for Macro Distress News
+    check_foreclosure_news(current_state)
+
+    # 2. Check for Pre-Foreclosure Legal Filings (NTS)
+    check_county_clerk_filings(current_state)
+
+    # 3. Analyze Upcoming Tax Sales
+    analyze_tax_deals(current_state)
+
+    # Save the updated state file back to the system
+    save_state(current_state)
+
+    print("Execution Complete.")
