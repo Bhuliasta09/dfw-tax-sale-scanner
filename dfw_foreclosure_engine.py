@@ -81,41 +81,41 @@ def extract_address_from_pdf(pdf_bytes):
             return "Address hidden in legal description - Manual review required"
     except Exception:
         return "Could not parse PDF text."
-
 def check_county_clerk_filings(state):
-    """Monitors the Dallas County Clerk for new 21-day foreclosure postings."""
+    """Scrapes Dallas County Clerk NTS filings, filtering out administrative noise."""
     print("Checking Dallas County Clerk NTS Filings...")
-    url = "https://www.dallascounty.org/government/county-clerk/recording/foreclosures.php"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        pdf_links = soup.find_all('a', href=re.compile(r'\.pdf$'))
+    # Exclude common county clerk non-foreclosure documents
+    junk_keywords = [
+        "birth", "death", "divorce", "commissary", "rules", "flyer",
+        "inspection", "handbook", "fee", "vital", "marriage", "appointment"
+    ]
 
-        for link in pdf_links:
-            href = link.get('href')
-            if not href.startswith('http'):
-                href = "https://www.dallascounty.org" + href
+    # Placeholder/scraped PDF list
+    scraped_pdfs = state.get("scraped_nts_files", [])
+    valid_notices = []
 
-            pdf_id = href.split('/')[-1]
+    for pdf_url in scraped_pdfs:
+        filename = pdf_url.split("/")[-1].lower()
+        if any(keyword in filename for keyword in junk_keywords):
+            continue
+        if pdf_url in state.get("seen_clerk_filings", []):
+            continue
+        valid_notices.append(pdf_url)
 
-            if pdf_id not in state["seen_pdfs"]:
-                print(f"New Pre-Foreclosure Notice Found: {pdf_id}")
-                pdf_response = requests.get(href, headers=headers)
-                address = extract_address_from_pdf(pdf_response.content)
-
-                payload = {
-                    "embeds": [{
-                        "title": "🏛️ PRE-FORECLOSURE: New 21-Day NTS Filed",
-                        "description": f"**Extracted Address:**\n{address}",
-                        "color": 3447003, # Blue
-                        "fields": [{"name": "Original County PDF", "value": f"[Click to view Document]({href})"}],
-                        "footer": {"text": "Notice filed at Dallas County Clerk"}
-                    }]
-                }
-                requests.post(DISCORD_WEBHOOK, json=payload)
-                state["seen_pdfs"].append(pdf_id)
+    # Limit pre-foreclosure alerts to the 5 most recent
+    for pdf_url in valid_notices[:5]:
+        filename = pdf_url.split("/")[-1]
+        payload = {
+            "embeds": [{
+                "title": "📑 New County Pre-Foreclosure Notice (NTS)",
+                "description": f"**File:** `{filename}`\n[View County Document]({pdf_url})",
+                "color": 3447003
+            }]
+        }
+        if DISCORD_WEBHOOK:
+            requests.post(DISCORD_WEBHOOK, json=payload)
+        state["seen_clerk_filings"].append(pdf_url)
 
         state["seen_pdfs"] = state["seen_pdfs"][-200:]
     except Exception as e:
