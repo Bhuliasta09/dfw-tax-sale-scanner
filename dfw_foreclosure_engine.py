@@ -225,7 +225,7 @@ def analyze_tax_deals(state):
     for deal in top_5_deals:
         payload = {
             "embeds": [{
-                "title": f"💰 TOP 5 FLIP: {deal['count']} County",
+                "title": f"💰 TOP 5 FLIP: {deal['county']} County",
                 "description": f"**{deal['address']}**\n**SqFt:** {deal['sqft']}",
                 "color": 16766720, # Gold Color
                 "image": {"url": deal['image_url']},
