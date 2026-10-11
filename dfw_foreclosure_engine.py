@@ -15,6 +15,7 @@ from datetime import datetime
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 RENTCAST_API_KEY = os.environ.get("RENTCAST_API_KEY")
 ATTOM_API_KEY = os.environ.get("ATTOM_API_KEY")
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY"
 
 STATE_FILE = "dfw_radar_state.json"
 
@@ -146,13 +147,25 @@ def get_arv(address):
         return res['price']
     except:
         return None
+def get_zillow_data(address):
+    """Pulls property picture and Resale Value (Zestimate)"""
+    url = "https://zillow-com1.p.rapidapi.com/property"
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "zillow-com1.p.rapidapi.com"
+    }
+    try:
+        res = requests.get(url, headers=headers, params={"address": address}, timeout=10).json()
+        image_url = res.get('imgSrc', 'https://via.placeholder.com/600x400?text=No+Image+Available')
+        arv = res.get('zestimate')
+        return image_url, arv
+    except Exception:
+        return 'https://via.placeholder.com/600x400?text=Image+Unavailable', None
 
 def analyze_tax_deals(state):
-    """Scrapes tax sale lists and underwrites the deals."""
+    """Scrapes tax sale lists and underwrites the deals with images and ROI."""
     print("Checking Tax Sale Deals...")
 
-    # In production, this scrapes LGBS.com or PBFCM.com dynamic JSON lists.
-    # We simulate the parsed target data structure here.
     upcoming_auctions = [
         {"id": "DAL-75149-1", "address": "1402 Example Ln, Mesquite, TX 75149", "min_bid": 35000, "county": "Dallas"},
         {"id": "DAL-75216-2", "address": "808 Sample St, Dallas, TX 75216", "min_bid": 18000, "county": "Dallas"},
@@ -169,54 +182,37 @@ def analyze_tax_deals(state):
         county = auction["county"]
 
         sqft = get_property_specs(address)
-        arv = get_arv(address)
+        image_url, arv = get_zillow_data(address)
 
-        if not arv: # Skip if we can't find a valuation
+        # Fallback to RentCast if Zillow returns empty
+        if not arv:
+            arv = get_arv(address)
+        if not arv:
             continue
 
         rehab_cost = sqft * REHAB_COST_PER_SQFT
         all_in_cost = min_bid + rehab_cost
+        closing_costs = arv * 0.08
+        net_profit = arv - all_in_cost - closing_costs
+        roi_percentage = (net_profit / all_in_cost) * 100
 
-        # Deduct 8% for realtor commissions, closing, and hard money holding costs
-        net_profit = arv - all_in_cost - (arv * 0.08)
-
-        # CORE FILTER: Only ping Discord if it meets your financial criteria
         if all_in_cost <= MAX_ALL_IN_BUDGET and net_profit >= MIN_NET_PROFIT:
             payload = {
                 "embeds": [{
-                    "title": f"💰 {county} County Tax Sale: Validated Deal",
-                    "description": f"**Address:** {address}\n**SqFt:** {sqft} (via ATTOM)",
-                    "color": 3066993, # Green
+                    "title": f"💰 {county} County Deal: Validated Flip",
+                    "description": f"**{address}**\n**SqFt:** {sqft} (via ATTOM)",
+                    "color": 3066993,
+                    "image": {"url": image_url},
                     "fields": [
-                        {"name": "Min Bid (Back Taxes)", "value": f"${min_bid:,.0f}", "inline": True},
-                        {"name": f"Est. Rehab (${REHAB_COST_PER_SQFT}/sqft)", "value": f"${rehab_cost:,.0f}", "inline": True},
+                        {"name": "Min Bid (Acquisition)", "value": f"${min_bid:,.0f}", "inline": True},
+                        {"name": "Est. Rehab", "value": f"${rehab_cost:,.0f}", "inline": True},
                         {"name": "Total All-In Cost", "value": f"${all_in_cost:,.0f}", "inline": True},
-                        {"name": "API Verified ARV", "value": f"${arv:,.0f} (RentCast)", "inline": False},
-                        {"name": "Projected Net Profit", "value": f"**${net_profit:,.0f}**", "inline": False}
+                        {"name": "Resale Value (ARV)", "value": f"${arv:,.0f}", "inline": False},
+                        {"name": "Projected Net Profit", "value": f"**${net_profit:,.0f}**", "inline": True},
+                        {"name": "Estimated ROI", "value": f"**{roi_percentage:.1f}%**", "inline": True}
                     ]
                 }]
             }
-            requests.post(DISCORD_WEBHOOK, json=payload)
+            if DISCORD_WEBHOOK:
+                requests.post(DISCORD_WEBHOOK, json=payload)
             state["seen_tax_deals"].append(prop_id)
-
-# ==========================================
-# MASTER EXECUTION LOOP
-# ==========================================
-if __name__ == "__main__":
-    print(f"Starting DFW Foreclosure Engine at {datetime.now()}")
-
-    current_state = load_state()
-
-    # 1. Check for Macro Distress News
-    check_foreclosure_news(current_state)
-
-    # 2. Check for Pre-Foreclosure Legal Filings (NTS)
-    check_county_clerk_filings(current_state)
-
-    # 3. Analyze Upcoming Tax Sales
-    analyze_tax_deals(current_state)
-
-    # Save the updated state file back to the system
-    save_state(current_state)
-
-    print("Execution Complete.")
