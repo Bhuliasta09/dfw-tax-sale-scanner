@@ -117,10 +117,6 @@ def check_county_clerk_filings(state):
             requests.post(DISCORD_WEBHOOK, json=payload)
         state["seen_clerk_filings"].append(pdf_url)
 
-        state["seen_pdfs"] = state["seen_pdfs"][-200:]
-    except Exception as e:
-        print(f"Error scraping county site: {e}")
-
 # ==========================================
 # MODULE 3: TAX SALE DEAL ANALYZER
 # ==========================================
