@@ -2,32 +2,37 @@ name: Texas Tax Foreclosure Scanner
 
 on:
   schedule:
-    - cron: '0 12 * * 1,4' # Runs at 7:00 AM CDT on Mon and Thu
+    - cron: '0 12 * * 1,4'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-scanner:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install Dependencies
-        run: pip install requests beautifulsoup4
+        run: pip install requests beautifulsoup4 feedparser pdfplumber lxml
 
       - name: Run Scraper
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: python tax_scraper.py
+          RENTCAST_API_KEY: ${{ secrets.RENTCAST_API_KEY }}
+          ATTOM_API_KEY: ${{ secrets.ATTOM_API_KEY }}
+        run: python dfw_foreclosure_engine.py
 
       - name: Commit State Tracking
         run: |
           git config --global user.name "GitHub Action Bot"
           git config --global user.email "action@github.com"
-          git add seen_deals.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update seen deals" && git push)
+          git add dfw_radar_state.json seen_deals.json || true
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update deals state" && git push)
