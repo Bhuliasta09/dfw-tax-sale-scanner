@@ -220,7 +220,7 @@ def analyze_tax_deals(state):
              print(f"[FILTERED OUT] Budget or profit thresold not met for {address}")
             
     # 2. SORT THE LIST BY HIGHEST ROI
-    qualified_deals.sort(key=lambda x: x["roi_percentage"}, reverse=True)
+    qualified_deals.sort(key=lambda x: x["roi_percentage"], reverse=True)
 
     # 3. GRAB ONLY THE TOP 5 DEALS
     top_5_deals = qualified_deals[:5]
