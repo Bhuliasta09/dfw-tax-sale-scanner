@@ -203,30 +203,47 @@ def analyze_tax_deals(state):
 
         print(f"[METRICS] All-In: ${all_in_cost:,.0f} | Profit: ${net_profit:,.0f} | ROI: {roi_percentage:.1f}%")
 
-        if all_in_cost <= MAX_ALL_IN_BUDGET and net_profit >= MIN_NET_PROFIT:
-            payload = {
-                "embeds": [{
-                    "title": f"💰 {county} County Deal: Validated Flip",
-                    "description": f"**{address}**\n**SqFt:** {sqft}",
-                    "color": 3066993,
-                    "image": {"url": image_url},
-                    "fields": [
-                        {"name": "Min Bid (Acquisition)", "value": f"${min_bid:,.0f}", "inline": True},
-                        {"name": "Est. Rehab", "value": f"${rehab_cost:,.0f}", "inline": True},
-                        {"name": "Total All-In Cost", "value": f"${all_in_cost:,.0f}", "inline": True},
-                        {"name": "Resale Value (ARV)", "value": f"${arv:,.0f}", "inline": False},
-                        {"name": "Projected Net Profit", "value": f"**${net_profit:,.0f}**", "inline": True},
-                        {"name": "Estimated ROI", "value": f"**{roi_percentage:.1f}%**", "inline": True}
-                    ]
-                }]
-            }
-            if DISCORD_WEBHOOK:
-                resp = requests.post(DISCORD_WEBHOOK, json=payload)
-                print(f"[DISCORD POST] Status: {resp.status_code}") # 204 means success
-                if resp.status_code != 204:
-                    print(f"[DISCORD ERROR] {resp.text}")
-            else:
-                print("[ERROR] DISCORD_WEBHOOK is not set or empty!")
-            state["seen_tax_deals"].append(prop_id)
+    if all_in_cost <= MAX_ALL_IN_BUDGET and net_profit >= MIN_NET_PROFIT:
+        payload = {
+            "embeds": [{
+                "title": f"💰 {county} County Deal: Validated Flip",
+                "description": f"**{address}**\n**SqFt:** {sqft}",
+                "color": 3066993,
+                "image": {"url": image_url},
+                "fields": [
+                    {"name": "Min Bid (Acquisition)", "value": f"${min_bid:,.0f}", "inline": True},
+                    {"name": "Est. Rehab", "value": f"${rehab_cost:,.0f}", "inline": True},
+                    {"name": "Total All-In Cost", "value": f"${all_in_cost:,.0f}", "inline": True},
+                    {"name": "Resale Value (ARV)", "value": f"${arv:,.0f}", "inline": False},
+                    {"name": "Projected Net Profit", "value": f"**${net_profit:,.0f}**", "inline": True},
+                    {"name": "Estimated ROI", "value": f"**{roi_percentage:.1f}%**", "inline": True}
+                ]
+            }]
+        }
+        if DISCORD_WEBHOOK:
+            resp = requests.post(DISCORD_WEBHOOK, json=payload)
+            print(f"[DISCORD POST] Status: {resp.status_code}") # 204 means success
+            if resp.status_code != 204:
+                print(f"[DISCORD ERROR] {resp.text}")
+        else:
+            print("[ERROR] DISCORD_WEBHOOK is not set or empty!")
+        state["seen_tax_deals"].append(prop_id)
     else:
         print(f"[FILTERED OUT] Budget or profit threshold not met for {address}")
+if __name__ == "__main__":
+    from datetime import datetime
+    print(f"Starting DFW Foreclosure Engine at {datetime.now()}")
+
+    # Verify Webhook Connectivity immediately
+    if DISCORD_WEBHOOK:
+        test_resp = requests.post(DISCORD_WEBHOOK, json={"content": "🚀 **Foreclosure Scanner Connected & Running**"})
+        print(f"Test Ping Status: {test_resp.status_code}")
+    else:
+        print("CRITICAL: DISCORD_WEBHOOK environment variable is missing!")
+
+    current_state = load_state()
+    check_foreclosure_news(current_state)
+    check_county_clerk_filings(current_state)
+    analyze_tax_deals(current_state)
+    save_state(current_state)
+    print("Execution Complete.")
