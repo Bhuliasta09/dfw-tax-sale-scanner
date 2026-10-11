@@ -175,6 +175,7 @@ def analyze_tax_deals(state):
     for auction in upcoming_auctions:
         prop_id = auction["id"]
         if prop_id in state["seen_tax_deals"]:
+            print(f"[SKIP] {prop_id} already processed.")
             continue
 
         address = auction["address"]
@@ -184,10 +185,14 @@ def analyze_tax_deals(state):
         sqft = get_property_specs(address)
         image_url, arv = get_zillow_data(address)
 
-        # Fallback to RentCast if Zillow returns empty
+        # Fallback if Zillow returns empty
         if not arv:
             arv = get_arv(address)
+
+        print(f"[EVALUATING] {address} | SqFt: {sqft} | Min Bid: ${min_bid} | ARV: {arv}")
+
         if not arv:
+            print(f"[SKIP] No ARV found for {address}")
             continue
 
         rehab_cost = sqft * REHAB_COST_PER_SQFT
@@ -196,11 +201,13 @@ def analyze_tax_deals(state):
         net_profit = arv - all_in_cost - closing_costs
         roi_percentage = (net_profit / all_in_cost) * 100
 
+        print(f"[METRICS] All-In: ${all_in_cost:,.0f} | Profit: ${net_profit:,.0f} | ROI: {roi_percentage:.1f}%")
+
         if all_in_cost <= MAX_ALL_IN_BUDGET and net_profit >= MIN_NET_PROFIT:
             payload = {
                 "embeds": [{
                     "title": f"💰 {county} County Deal: Validated Flip",
-                    "description": f"**{address}**\n**SqFt:** {sqft} (via ATTOM)",
+                    "description": f"**{address}**\n**SqFt:** {sqft}",
                     "color": 3066993,
                     "image": {"url": image_url},
                     "fields": [
@@ -214,5 +221,12 @@ def analyze_tax_deals(state):
                 }]
             }
             if DISCORD_WEBHOOK:
-                requests.post(DISCORD_WEBHOOK, json=payload)
+                resp = requests.post(DISCORD_WEBHOOK, json=payload)
+                print(f"[DISCORD POST] Status: {resp.status_code}") # 204 means success
+                if resp.status_code != 204:
+                    print(f"[DISCORD ERROR] {resp.text}")
+            else:
+                print("[ERROR] DISCORD_WEBHOOK is not set or empty!")
             state["seen_tax_deals"].append(prop_id)
+    else:
+        print(f"[FILTERED OUT] Budget or profit threshold not met for {address}")
