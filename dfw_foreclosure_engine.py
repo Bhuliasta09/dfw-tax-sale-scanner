@@ -215,7 +215,7 @@ def analyze_tax_deals(state):
                 "net_profit": net_profit,
                 "roi_percentage": roi_percentage,
                 "image_url": image_url
-            }]
+            })
         else:
              print(f"[FILTERED OUT] Budget or profit thresold not met for {address}")
             
