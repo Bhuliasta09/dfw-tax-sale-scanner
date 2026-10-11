@@ -179,6 +179,9 @@ def analyze_tax_deals(state):
         address = auction["address"]
         min_bid = auction["min_bid"]
         county = auction["county"]
+        
+        # Extract the date from the dictionary
+        auction_date = auction.get("auction_date", "TBD")
 
         sqft = get_property_specs(address)
         image_url, arv = get_zillow_data(address)
@@ -187,7 +190,7 @@ def analyze_tax_deals(state):
         if not arv:
             arv = sqft * 210
 
-        print(f"[EVALUATING] {address} | SqFt: {sqft} | Min Bid: ${min_bid} | ARV: {arv}")
+        print(f"[EVALUATING] {address} | Date: {auction_date} | SqFt: {sqft} | Min Bid: ${min_bid} | ARV: {arv}")
 
         rehab_cost = sqft * REHAB_COST_PER_SQFT
         all_in_cost = min_bid + rehab_cost
@@ -202,6 +205,7 @@ def analyze_tax_deals(state):
             qualified_deals.append({
                 "prop_id": prop_id,
                 "address": address,
+                "auction_date": auction_date,
                 "county": county,
                 "sqft": sqft,
                 "min_bid": min_bid,
@@ -226,7 +230,7 @@ def analyze_tax_deals(state):
         payload = {
             "embeds": [{
                 "title": f"💰 TOP 5 FLIP: {deal['county']} County",
-                "description": f"**{deal['address']}**\n**SqFt:** {deal['sqft']}",
+                "description": f"**{deal['address']}**\n**Auction Date:** {deal[auction_date']}\n**SqFt:** {deal['sqft']}",
                 "color": 16766720, # Gold Color
                 "image": {"url": deal['image_url']},
                 "fields": [
