@@ -15,7 +15,7 @@ from datetime import datetime
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 RENTCAST_API_KEY = os.environ.get("RENTCAST_API_KEY")
 ATTOM_API_KEY = os.environ.get("ATTOM_API_KEY")
-RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY"
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY")
 
 STATE_FILE = "dfw_radar_state.json"
 
