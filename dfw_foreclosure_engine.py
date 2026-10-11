@@ -231,7 +231,7 @@ def analyze_tax_deals(state):
             "embeds": [{
                 "title": f"💰 TOP 5 FLIP: {deal['count']} County",
                 "description": f"**{deal['address']}**\n**SqFt:** {deal['sqft']}",
-                "color": 16766720, Gold Color
+                "color": 16766720, # Gold Color
                 "image": {"url": deal['image_url']},
                 "fields": [
                     {"name": "Min Bid (Acquisition)", "value": f"${min_bid:,.0f}", "inline": True},
