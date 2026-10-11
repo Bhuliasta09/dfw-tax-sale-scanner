@@ -28,6 +28,7 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           RENTCAST_API_KEY: ${{ secrets.RENTCAST_API_KEY }}
           ATTOM_API_KEY: ${{ secrets.ATTOM_API_KEY }}
+          RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
         run: python dfw_foreclosure_engine.py
 
       - name: Commit State Tracking
